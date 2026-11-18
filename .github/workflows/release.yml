@@ -1,0 +1,103 @@
+# Signs the extension with Mozilla (unlisted) and publishes it, plus the update
+# manifest Firefox checks, to GitHub Pages. Run it by pushing a tag like v1.6.1
+# whose number matches "version" in extension/manifest.json (release.sh does both).
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # create the GitHub release
+  pages: write      # publish to GitHub Pages
+  id-token: write   # required by the Pages deploy action
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Check the tag matches the manifest version
+        run: |
+          VERSION=$(jq -r .version extension/manifest.json)
+          if [ "${GITHUB_REF_NAME#v}" != "$VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match manifest version $VERSION"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Point the extension at this repo's update manifest
+        run: |
+          OWNER=$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')
+          BASE="https://$OWNER.github.io/${GITHUB_REPOSITORY#*/}"
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+          jq --arg u "$BASE/updates.json" '.browser_specific_settings.gecko.update_url = $u' \
+            extension/manifest.json > manifest.tmp && mv manifest.tmp extension/manifest.json
+          echo "Update URL: $BASE/updates.json"
+
+      - name: Validate with Mozilla's linter
+        run: npx --yes web-ext@10 lint --source-dir extension --self-hosted --warnings-as-errors
+
+      - name: Sign with Mozilla (unlisted)
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ -z "$AMO_JWT_ISSUER" ] || [ -z "$AMO_JWT_SECRET" ]; then
+            echo "::error::Add the AMO_JWT_ISSUER and AMO_JWT_SECRET repository secrets first (see README)"
+            exit 1
+          fi
+          npx --yes web-ext@10 sign \
+            --source-dir extension \
+            --artifacts-dir dist \
+            --channel unlisted \
+            --api-key "$AMO_JWT_ISSUER" \
+            --api-secret "$AMO_JWT_SECRET" \
+            --approval-timeout 1800000
+
+      - name: Build the update site
+        run: |
+          XPI=$(ls dist/*.xpi | head -n 1)
+          if [ -z "$XPI" ]; then echo "::error::No signed .xpi was produced"; exit 1; fi
+          mkdir -p site
+          cp "$XPI" "site/world-clocks-$VERSION.xpi"
+          cp "$XPI" site/world-clocks-latest.xpi
+          HASH="sha256:$(sha256sum "$XPI" | cut -d' ' -f1)"
+          ID=$(jq -r .browser_specific_settings.gecko.id extension/manifest.json)
+          jq -n --arg id "$ID" --arg v "$VERSION" --arg link "$BASE/world-clocks-$VERSION.xpi" --arg hash "$HASH" \
+            '{addons: {($id): {updates: [{version: $v, update_link: $link, update_hash: $hash}]}}}' > site/updates.json
+          cat > site/index.html << HTML
+          <!doctype html>
+          <html lang="en"><head><meta charset="utf-8"><title>World Clocks</title>
+          <style>body{font-family:system-ui,sans-serif;background:#12141a;color:#e8eaf0;max-width:560px;margin:60px auto;padding:0 16px;line-height:1.5}
+          a{color:#3ddc84}code{background:#1c1f28;padding:2px 6px;border-radius:4px}</style></head>
+          <body><h1>World Clocks $VERSION</h1>
+          <p><a href="world-clocks-latest.xpi">Install in Firefox</a> (open this page in Firefox and click the link).</p>
+          <p>Once installed, Firefox updates it automatically from <code>updates.json</code>.</p></body></html>
+          HTML
+          cat site/updates.json
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
+
+      - name: Attach the signed .xpi to a GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: site/world-clocks-${{ env.VERSION }}.xpi

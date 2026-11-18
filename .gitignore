@@ -1,0 +1,11 @@
+# build output
+dist/
+site/
+web-ext-artifacts/
+*.xpi
+
+# your own site list export: keep it out of the public repo
+my-sites.json
+world-clocks-settings.json
+
+.DS_Store
