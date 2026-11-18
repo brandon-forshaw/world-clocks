@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>World Clocks settings</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <main>
+      <h1>World Clocks settings</h1>
+      <p class="lede">Changes apply to open new tabs as soon as you save. Settings sync between your Firefox installs if you use Firefox Sync.</p>
+
+      <section class="panel">
+        <h2>Defaults</h2>
+        <div class="defaults">
+          <label>Working hours
+            <input id="defaultHours" type="text" placeholder="09:00-17:30" />
+            <span class="hint">Used by any site that doesn't set its own.</span>
+          </label>
+          <label>"Starting / leaving soon" warning
+            <span class="inline"><input id="soonMinutes" type="number" min="0" max="180" step="5" /> minutes</span>
+            <span class="hint">How long before start and finish the amber and red states show.</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Sites</h2>
+          <span class="hint">Sites with the same group share a pill. Coordinates: right-click a place in Google Maps and click the numbers to copy them, then paste here.</span>
+        </div>
+        <div id="sites"></div>
+        <button id="add" class="btn">+ Add site</button>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Extra holidays</h2>
+          <span class="hint">Days the built-in rules don't know about: next year's Indian festival dates, a confirmed AFL Grand Final Friday, or a company day off. Each one applies to every site using that holiday region.</span>
+        </div>
+        <div id="hol-warnings"></div>
+        <div id="extra-hols"></div>
+        <button id="add-hol" class="btn">+ Add holiday</button>
+      </section>
+
+      <div id="errors" class="errors" hidden></div>
+
+      <div class="actions">
+        <button id="save" class="btn primary">Save</button>
+        <span id="status" class="status"></span>
+        <span class="spacer"></span>
+        <button id="export" class="btn">Export</button>
+        <label class="btn file-btn">Import<input id="import" type="file" accept=".json,application/json" /></label>
+        <button id="reset" class="btn danger">Reset to defaults</button>
+      </div>
+    </main>
+
+    <datalist id="tz-list"></datalist>
+    <datalist id="group-list"></datalist>
+
+    <script src="holidays.js"></script>
+    <script src="core.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

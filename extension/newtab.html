@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>World Clocks</title>
+    <link rel="stylesheet" href="newtab.css" />
+  </head>
+  <body>
+    <div class="wrap">
+      <div class="globe-wrap">
+        <canvas id="globe" title="Drag to spin, double-click to auto-rotate"></canvas>
+        <div id="labels"></div>
+      </div>
+      <main id="clocks"></main>
+      <section id="overlap"></section>
+    </div>
+
+    <script src="lib/d3-array.min.js"></script>
+    <script src="lib/d3-geo.min.js"></script>
+    <script src="lib/topojson-client.min.js"></script>
+    <script src="holidays.js"></script>
+    <script src="core.js"></script>
+    <script src="newtab.js"></script>
+  </body>
+</html>
