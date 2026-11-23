@@ -17,7 +17,59 @@ const DEFAULT_CONFIG = {
     { name: "Support (24/7)",    group: "Support",  city: "Sofia",        region: "BG",     tz: "Europe/Sofia",        coords: [23.322, 42.698],  hours: "24/7", observesHolidays: false },
   ],
   customHolidays: [],
+  display: {},
 };
+
+// Display and behaviour settings. Anything missing from a saved config falls
+// back to these, so older saved settings keep working.
+const DEFAULT_DISPLAY = {
+  clock: "24",            // "24" or "12"
+  seconds: true,          // seconds on the cards
+  dateStyle: "short",     // see DATE_STYLES
+  locale: "",             // "" = the browser's language
+  theme: "dark",          // "dark", "light" or "system"
+  motion: "system",       // reduce motion: "system", "on" (reduce) or "off"
+  globe: { show: true, spin: true, speed: 1, arcs: true, pulses: true, night: true },
+  openTab: "last",        // "last", "overlap" or "convert"
+  convDuration: 60,       // converter's default meeting length, minutes
+  convFrom: "home",       // "home", "UTC" or a site's name
+  sortPills: "order",     // "order", "status" or "tz"
+};
+
+const DATE_STYLES = {
+  short:       { label: "Short",                opts: { weekday: "short", day: "numeric", month: "short" } },
+  shortYear:   { label: "Short with year",      opts: { weekday: "short", day: "numeric", month: "short", year: "numeric" } },
+  long:        { label: "Long",                 opts: { weekday: "long", day: "numeric", month: "long" } },
+  full:        { label: "Full",                 opts: { weekday: "long", day: "numeric", month: "long", year: "numeric" } },
+  numeric:     { label: "Numbers",              opts: { day: "2-digit", month: "2-digit" } },
+  numericYear: { label: "Numbers with year",    opts: { day: "2-digit", month: "2-digit", year: "numeric" } },
+  iso:         { label: "ISO (2026-11-17)",     opts: null },
+};
+
+const LOCALES = [
+  ["", "Browser default"], ["en-GB", "English (UK)"], ["en-IE", "English (Ireland)"], ["en-US", "English (US)"],
+  ["en-CA", "English (Canada)"], ["en-AU", "English (Australia)"], ["en-ZA", "English (South Africa)"],
+  ["en-IN", "English (India)"], ["bg-BG", "Bulgarian"], ["de-DE", "German"], ["fr-FR", "French"],
+  ["es-ES", "Spanish"], ["it-IT", "Italian"], ["nl-NL", "Dutch"], ["pl-PL", "Polish"], ["pt-PT", "Portuguese"],
+];
+
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DEFAULT_DAYS = [1, 2, 3, 4, 5];
+
+function mergeDisplay(d) {
+  const x = Object.assign({}, DEFAULT_DISPLAY, d || {});
+  x.globe = Object.assign({}, DEFAULT_DISPLAY.globe, (d && d.globe) || {});
+  if (!DATE_STYLES[x.dateStyle]) x.dateStyle = DEFAULT_DISPLAY.dateStyle;
+  try { if (x.locale) new Intl.DateTimeFormat(x.locale); } catch (e) { x.locale = ""; }
+  return x;
+}
+
+// Links and environments per client (group name), set by prepareNodes().
+let CLIENTS = {};
+
+// Current display settings, set by prepareNodes().
+let DISPLAY = mergeDisplay({});
+const displayLocale = () => DISPLAY.locale || undefined;
 
 const REGIONS = {
   "GB-ENG": "UK: England & Wales",
@@ -30,8 +82,6 @@ const REGIONS = {
   "IN": "India",
   "": "None",
 };
-
-const use24h = true;
 
 // Look per status: badge text/class, marker, halo, and connection-line colour.
 const STATUS = {
@@ -97,6 +147,10 @@ function validateConfig(cfg) {
     if (!(Math.abs(c[0]) <= 180 && Math.abs(c[1]) <= 90)) errs.push(where + ": coordinates are missing or out of range.");
     if (n.hours && n.hours !== "24/7" && parseHoursStrict(n.hours) === null) errs.push(where + ": hours must look like 09:00-17:30 or 24/7.");
     if (n.region && !(n.region in REGIONS)) errs.push(where + ": unknown holiday region '" + n.region + "'.");
+    if (n.days !== undefined && n.hours !== "24/7" &&
+        (!Array.isArray(n.days) || !n.days.length || n.days.some((d) => !(d >= 0 && d <= 6)))) {
+      errs.push(where + ": pick at least one working day.");
+    }
   });
   (cfg.customHolidays || []).forEach((h, i) => {
     const where = "Extra holiday " + (i + 1) + (h && h.name ? " (" + h.name + ")" : "");
@@ -104,6 +158,19 @@ function validateConfig(cfg) {
     if (!h || !/^\d{4}-\d{2}-\d{2}$/.test(h.date || "") || isNaN(Date.parse(h.date))) errs.push(where + ": needs a date.");
     if (!h || !(h.name || "").trim()) errs.push(where + ": needs a name.");
   });
+  for (const [client, c] of Object.entries(cfg.clients || {})) {
+    (c.links || []).forEach((l, j) => {
+      const where = client + ", link " + (j + 1) + (l.label ? " (" + l.label + ")" : "");
+      if (!(l.label || "").trim()) errs.push(where + ": needs a label.");
+      const urls = l.url !== undefined ? [l.url] : Object.values(l.urls || {});
+      if (!urls.filter(Boolean).length) errs.push(where + ": needs at least one address.");
+      for (const u of urls.filter(Boolean)) {
+        let ok = false;
+        try { const x = new URL(u); ok = x.protocol === "https:" || x.protocol === "http:"; } catch (e) { /* bad */ }
+        if (!ok) errs.push(where + ": '" + u + "' must start with https:// (or http://).");
+      }
+    });
+  }
   const homes = cfg.nodes.filter((n) => n.home).length;
   if (homes !== 1) errs.push("Exactly one site must be marked as home (" + homes + " are).");
   return errs;
@@ -128,17 +195,29 @@ function parseHours(str) {
 }
 
 // ---- Nodes ----------------------------------------------------------------
+// On-screen time, following the 12/24-hour and seconds settings.
+function timeFormatter(tz, withSeconds) {
+  const o = { timeZone: tz, hour: DISPLAY.clock === "12" ? "numeric" : "2-digit", minute: "2-digit" };
+  if (withSeconds) o.second = "2-digit";
+  if (DISPLAY.clock === "12") o.hour12 = true; else o.hourCycle = "h23";
+  return new Intl.DateTimeFormat(displayLocale(), o);
+}
+
+// On-screen date, following the date style and locale settings.
+function dateFormatter(tz, style) {
+  const st = DATE_STYLES[style || DISPLAY.dateStyle] || DATE_STYLES.short;
+  if (!st.opts) {
+    const f = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
+    return { format: (d) => f.format(d) };  // en-CA gives YYYY-MM-DD
+  }
+  return new Intl.DateTimeFormat(displayLocale(), Object.assign({ timeZone: tz }, st.opts));
+}
+
 function makeFormatters(tz) {
   return {
-    time: new Intl.DateTimeFormat("en-GB", {
-      timeZone: tz, hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: !use24h,
-    }),
-    hm: new Intl.DateTimeFormat("en-GB", {
-      timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: !use24h,
-    }),
-    date: new Intl.DateTimeFormat("en-GB", {
-      timeZone: tz, weekday: "short", day: "numeric", month: "short",
-    }),
+    time: timeFormatter(tz, DISPLAY.seconds),
+    hm: timeFormatter(tz, false),
+    date: dateFormatter(tz),
     // local date, weekday and 24h time, used for status and the overlap search
     clock: new Intl.DateTimeFormat("en-GB", {
       timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
@@ -149,6 +228,8 @@ function makeFormatters(tz) {
 
 // Turn a saved config into working node objects (adds parsed hours, formatters).
 function prepareNodes(cfg) {
+  DISPLAY = mergeDisplay(cfg.display);
+  CLIENTS = cfg.clients && typeof cfg.clients === "object" ? cfg.clients : {};
   if (typeof Holidays !== "undefined") Holidays.setCustom(cfg.customHolidays || []);
   DEFAULT_HOURS = parseHoursStrict(cfg.defaultHours) ? cfg.defaultHours : DEFAULT_CONFIG.defaultHours;
   SOON = Number.isFinite(Number(cfg.soonMinutes)) ? Number(cfg.soonMinutes) : DEFAULT_CONFIG.soonMinutes;
@@ -156,6 +237,7 @@ function prepareNodes(cfg) {
     n.group = (n.group || n.name).trim();
     n.hrs = parseHours(n.hours);
     n.observes = n.observesHolidays === undefined ? true : !!n.observesHolidays;
+    n.days = Array.isArray(n.days) && n.days.length ? n.days.slice() : DEFAULT_DAYS.slice();
     try { n.fmt = makeFormatters(n.tz); }
     catch (e) { n.tz = "UTC"; n.fmt = makeFormatters("UTC"); }
     return n;
@@ -201,10 +283,12 @@ function siteLabel(n, g) {
 function localClock(node, now) {
   const parts = node.fmt.clock.formatToParts(now);
   const get = (t) => parts.find((p) => p.type === t).value;
-  const wd = get("weekday");
+  const dow = WEEKDAYS.indexOf(get("weekday"));
   return {
     minutes: (Number(get("hour")) % 24) * 60 + Number(get("minute")),
-    weekend: wd === "Sat" || wd === "Sun",
+    dow,
+    weekend: dow === 0 || dow === 6,
+    offDay: !(node.days || DEFAULT_DAYS).includes(dow),
     ymd: get("year") + "-" + get("month") + "-" + get("day"),
   };
 }
@@ -223,7 +307,7 @@ function siteState(node, now) {
 
   if (holiday) status = "holiday";
   else if (allDay) status = "online";
-  else if (c.weekend) status = "offline";
+  else if (c.offDay) status = "offline";
   else {
     const m = c.minutes;
     const inWindow = start < end ? (m >= start && m < end) : (m >= start || m < end);
@@ -231,7 +315,7 @@ function siteState(node, now) {
     if (inWindow) status = until(end) <= SOON ? "leaving" : "online";
     else status = until(start) > 0 && until(start) <= SOON ? "arriving" : "offline";
   }
-  return { status, holiday, minutes: c.minutes, weekend: c.weekend, ymd: c.ymd };
+  return { status, holiday, minutes: c.minutes, weekend: c.weekend, offDay: c.offDay && !allDay, ymd: c.ymd };
 }
 
 // Strictly within working hours (used by the overlap finder).
@@ -241,8 +325,8 @@ function isOnlineAt(node, date) {
 }
 
 // Next public holiday for a site, looking about six months ahead.
-const nextHolFmt = new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", weekday: "short", day: "numeric", month: "short" });
 function nextHoliday(node, ymd) {
+  const nextHolFmt = dateFormatter("UTC");
   if (!node.observes || typeof Holidays === "undefined") return null;
   const [y, m, d] = ymd.split("-").map(Number);
   for (let i = 1; i <= 190; i++) {
@@ -258,4 +342,51 @@ function holidayWarnings(nodes, now) {
   if (typeof Holidays === "undefined" || !Holidays.missingData) return [];
   const regions = [...new Set(nodes.filter((n) => n.observes).map((n) => n.region).filter(Boolean))];
   return Holidays.missingData(regions, now || new Date());
+}
+
+// Why a site is off at a moment: "Weekend" or "Day off" (for custom working days).
+function offDayText(st) { return st.weekend ? "Weekend" : "Day off"; }
+
+// ---- Look and motion -------------------------------------------------------
+function applyTheme(display) {
+  const d = display || DISPLAY;
+  const mq = window.matchMedia ? window.matchMedia("(prefers-color-scheme: light)") : null;
+  const set = () => {
+    const t = d.theme === "system" ? (mq && mq.matches ? "light" : "dark") : d.theme;
+    document.documentElement.dataset.theme = t === "light" ? "light" : "dark";
+  };
+  set();
+  if (mq && d.theme === "system") mq.addEventListener("change", set);
+}
+
+function reduceMotion(display) {
+  const d = display || DISPLAY;
+  if (d.motion === "on") return true;
+  if (d.motion === "off") return false;
+  return !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+}
+
+// ---- Ordering ---------------------------------------------------------------
+function utcOffsetMin(tz, date) {
+  const p = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
+  }).formatToParts(date || new Date());
+  const g = (t) => Number(p.find((x) => x.type === t).value);
+  const d = date || new Date();
+  const asUtc = Date.UTC(g("year"), g("month") - 1, g("day"), g("hour"), g("minute"));
+  return Math.round((asUtc - Math.floor(d.getTime() / 60000) * 60000) / 60000);
+}
+
+// Groups in display order. "order" keeps the settings order (home first),
+// "status" puts online first, "tz" goes west to east.
+function sortedGroups(groups, mode) {
+  const homeFirst = (a, b) => (b.nodes.some((n) => n.home) ? 1 : 0) - (a.nodes.some((n) => n.home) ? 1 : 0);
+  const list = groups.slice();
+  if (mode === "status") {
+    list.sort((a, b) => homeFirst(a, b) || RANK[bestNode(b).status] - RANK[bestNode(a).status]);
+  } else if (mode === "tz") {
+    const now = new Date();
+    list.sort((a, b) => homeFirst(a, b) || utcOffsetMin(a.nodes[0].tz, now) - utcOffsetMin(b.nodes[0].tz, now));
+  }
+  return list;
 }

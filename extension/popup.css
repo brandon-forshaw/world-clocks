@@ -1,7 +1,9 @@
 :root {
   color-scheme: dark;
+  --fg: 255, 255, 255;
   --bg: #12141a;
   --card: #1c1f28;
+  --field: #14161c;
   --text: #e8eaf0;
   --muted: #8a90a2;
   --on: #3ddc84;
@@ -9,6 +11,21 @@
   --leave: #f4685c;
   --off: #5a6373;
   --hol: #b18cff;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --fg: 0, 0, 0;
+  --bg: #f3f4f7;
+  --card: #ffffff;
+  --field: #f6f7f9;
+  --text: #1b1e26;
+  --muted: #5d6475;
+  --on: #1e9e58;
+  --soon: #b7791f;
+  --leave: #d2453a;
+  --off: #8a91a0;
+  --hol: #7d5ad8;
 }
 
 * { box-sizing: border-box; }
@@ -126,10 +143,10 @@ footer button {
   font: inherit;
   font-size: 0.78rem;
   color: var(--text);
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(var(--fg), 0.06);
+  border: 1px solid rgba(var(--fg), 0.1);
   border-radius: 8px;
   padding: 7px 0;
   cursor: pointer;
 }
-footer button:hover { background: rgba(255, 255, 255, 0.11); }
+footer button:hover { background: rgba(var(--fg), 0.11); }

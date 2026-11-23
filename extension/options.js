@@ -78,6 +78,20 @@ function renderSites() {
     const always = input("checkbox", allDay, { "data-k": "always" });
     always.addEventListener("change", () => { hours.disabled = always.checked; });
     const observes = input("checkbox", n.observesHolidays !== false, { "data-k": "observes" });
+    const days = document.createElement("span");
+    days.className = "days";
+    days.title = "Working days";
+    const onDays = Array.isArray(n.days) && n.days.length ? n.days : DEFAULT_DAYS;
+    for (const d of [1, 2, 3, 4, 5, 6, 0]) {
+      const l = document.createElement("label");
+      l.className = "day";
+      const cb = input("checkbox", onDays.includes(d), { "data-day": d });
+      l.append(cb, document.createTextNode(WEEKDAYS[d].slice(0, 2)));
+      days.append(l);
+    }
+    const syncDays = () => days.classList.toggle("disabled", always.checked);
+    always.addEventListener("change", syncDays);
+    syncDays();
     const home = input("radio", n.home, { name: "home", "data-k": "home" });
     home.addEventListener("change", () => {
       for (const r of root.querySelectorAll(".site")) r.classList.toggle("is-home", r.querySelector("[data-k=home]").checked);
@@ -103,7 +117,7 @@ function renderSites() {
       l.append(el, document.createTextNode(" " + labelText));
       return l;
     };
-    toggles.append(tog("24/7", always), tog("Observes holidays", observes), tog("Home", home));
+    toggles.append(days, tog("24/7", always), tog("Observes holidays", observes), tog("Home", home));
 
     const tools = document.createElement("div");
     tools.className = "tools";
@@ -142,6 +156,8 @@ function refreshGroupList() {
 
 // Read the form back into `work`.
 function collect() {
+  if ($("d-clock")) collectDisplay();
+  if ($("clients")) collectClients();
   work.defaultHours = $("defaultHours").value.trim() || DEFAULT_CONFIG.defaultHours;
   work.soonMinutes = Number($("soonMinutes").value);
   const rows = [...$("sites").querySelectorAll(".site")];
@@ -158,6 +174,8 @@ function collect() {
     if (v("always").checked) node.hours = "24/7";
     else if (v("hours").value.trim()) node.hours = v("hours").value.trim();
     if (!v("observes").checked) node.observesHolidays = false;
+    const picked = [...row.querySelectorAll("[data-day]")].filter((c) => c.checked).map((c) => Number(c.dataset.day)).sort();
+    if (picked.join() !== DEFAULT_DAYS.join()) node.days = picked;
     if (v("home").checked) node.home = true;
     return node;
   });  work.customHolidays = [...$("extra-hols").querySelectorAll(".hol-row")].map((row) => ({
@@ -183,7 +201,237 @@ function showErrors(errs) {
   box.append(h, ul);
 }
 
+// ---- Client links ----
+// One block per client (group). Optional environments; each link has one
+// address for every environment, or one per environment.
+const groupNames = () => [...new Set(work.nodes.map((n) => (n.group || n.name || "").trim()).filter(Boolean))];
+const parseEnvs = (t) => [...new Set((t || "").split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean))];
+
+function renderClients() {
+  const root = $("clients");
+  root.innerHTML = "";
+  work.clients = work.clients || {};
+  for (const name of groupNames()) {
+    const c = work.clients[name] || { envs: [], links: [] };
+    const envs = (c.envs || []).filter(Boolean);
+    const box = document.createElement("div");
+    box.className = "client";
+    box.dataset.client = name;
+
+    const head = document.createElement("div");
+    head.className = "client-head";
+    const b = document.createElement("b");
+    b.textContent = name;
+    const envIn = input("text", envs.join(", "), { placeholder: "Environments, optional: e.g. DV, QA, ST, NP etc.", "data-c": "envs" });
+    envIn.addEventListener("change", () => { collect(); renderClients(); });
+    head.append(b, envIn);
+    box.append(head);
+
+    const links = c.links || [];
+    const cols = Math.max(1, envs.length);
+    const grid = document.createElement("div");
+    grid.className = "ltable";
+    grid.style.gridTemplateColumns = "200px repeat(" + cols + ", minmax(0, 1fr))" + (envs.length ? " auto" : "") + " 34px";
+    if (links.length) {
+      const hdr = (t) => { const h = document.createElement("span"); h.className = "lt-h"; h.textContent = t; return h; };
+      grid.append(hdr("Label"));
+      if (envs.length) for (const e of envs) grid.append(hdr(e)); else grid.append(hdr("Address"));
+      if (envs.length) grid.append(hdr(""));
+      grid.append(hdr(""));
+    }
+    links.forEach((l, j) => {
+      const row = document.createElement("div");
+      row.className = "lt-row";
+      const lab = input("text", l.label, { placeholder: "e.g. BOS admin", "data-l": "label" });
+      row.append(lab);
+      const same = !envs.length || l.url !== undefined;
+      if (same) {
+        const u = input("text", l.url !== undefined ? l.url : Object.values(l.urls || {})[0] || "", { placeholder: "https://", "data-l": "url" });
+        u.style.gridColumn = "span " + cols;
+        row.append(u);
+      } else {
+        for (const e of envs) row.append(input("text", (l.urls || {})[e] || "", { placeholder: e + " address", "data-env": e }));
+      }
+      if (envs.length) {
+        const t = document.createElement("label");
+        t.className = "tog";
+        t.title = "Use one address for every environment";
+        const cb = input("checkbox", same, { "data-l": "same" });
+        cb.addEventListener("change", () => { collect(); renderClients(); });
+        t.append(cb, document.createTextNode(" Same in all"));
+        row.append(t);
+      }
+      const del = document.createElement("button");
+      del.className = "icon-btn";
+      del.textContent = "✕";
+      del.title = "Remove this link";
+      del.addEventListener("click", () => { collect(); work.clients[name].links.splice(j, 1); markDirty(); renderClients(); });
+      row.append(del);
+      grid.append(row);
+    });
+    box.append(grid);
+
+    const add = document.createElement("button");
+    add.className = "btn small";
+    add.textContent = "+ Add link";
+    add.addEventListener("click", () => {
+      collect();
+      const cc = work.clients[name] || (work.clients[name] = { envs: [], links: [] });
+      cc.links = (cc.links || []).concat([envs.length ? { label: "", urls: {} } : { label: "", url: "" }]);
+      markDirty();
+      renderClients();
+      const rows = root.querySelector(".client[data-client=\"" + CSS.escape(name) + "\"]").querySelectorAll(".lt-row");
+      rows[rows.length - 1].querySelector("[data-l=label]").focus();
+    });
+    box.append(add);
+    root.append(box);
+  }
+}
+
+function collectClients() {
+  const out = {};
+  for (const box of $("clients").querySelectorAll(".client")) {
+    const name = box.dataset.client;
+    const envs = parseEnvs(box.querySelector("[data-c=envs]").value);
+    const links = [];
+    for (const row of box.querySelectorAll(".lt-row")) {
+      const label = row.querySelector("[data-l=label]").value.trim();
+      const sameCb = row.querySelector("[data-l=same]");
+      const one = row.querySelector("[data-l=url]");
+      let link;
+      if (one) {
+        const url = one.value.trim();
+        // "Same in all" switched off: start each environment with the old address
+        if (sameCb && !sameCb.checked && envs.length) {
+          link = { label, urls: Object.fromEntries(envs.map((e) => [e, url])) };
+        } else link = { label, url };
+      } else {
+        const urls = {};
+        for (const u of row.querySelectorAll("[data-env]")) if (u.value.trim()) urls[u.dataset.env] = u.value.trim();
+        if (sameCb && sameCb.checked) link = { label, url: Object.values(urls)[0] || "" };
+        else link = { label, urls };
+      }
+      if (envs.length && link.urls) {  // drop addresses for environments that were removed
+        for (const k of Object.keys(link.urls)) if (!envs.includes(k)) delete link.urls[k];
+      }
+      if (!envs.length && link.urls) link = { label, url: Object.values(link.urls)[0] || "" };
+      const empty = !label && !(link.url || Object.values(link.urls || {}).some(Boolean));
+      if (!empty) links.push(link);
+    }
+    if (envs.length || links.length) out[name] = { envs, links };
+  }
+  work.clients = out;
+}
+
+// ---- Display settings ----
+function sel(id, options, value) {
+  const s = document.createElement("select");
+  s.id = id;
+  for (const [v, t] of options) {
+    const o = document.createElement("option");
+    o.value = String(v);
+    o.textContent = t;
+    s.append(o);
+  }
+  s.value = String(value);
+  s.addEventListener("change", markDirty);
+  return s;
+}
+function check(id, value, text) {
+  const l = document.createElement("label");
+  l.className = "tog";
+  const c = input("checkbox", value, { id });
+  l.append(c, document.createTextNode(" " + text));
+  return l;
+}
+function row(label, ...controls) {
+  const r = document.createElement("div");
+  r.className = "drow";
+  const h = document.createElement("span");
+  h.className = "dlabel";
+  h.textContent = label;
+  const c = document.createElement("span");
+  c.className = "dcontrols";
+  c.append(...controls);
+  r.append(h, c);
+  return r;
+}
+
+// Date style names with a live example in the chosen language.
+function dateStyleOptions(locale) {
+  const ex = new Date(Date.UTC(2026, 10, 17, 12));
+  return Object.entries(DATE_STYLES).map(([k, v]) => {
+    let sample;
+    try {
+      sample = v.opts ? new Intl.DateTimeFormat(locale || undefined, Object.assign({ timeZone: "UTC" }, v.opts)).format(ex) : "2026-11-17";
+    } catch (e) { sample = ""; }
+    return [k, v.label + ": " + sample];
+  });
+}
+
+function renderDisplay() {
+  const d = mergeDisplay(work.display);
+  const box = $("display");
+  box.innerHTML = "";
+  const dateSel = sel("d-dateStyle", dateStyleOptions(d.locale), d.dateStyle);
+  const locSel = sel("d-locale", LOCALES, d.locale);
+  locSel.addEventListener("change", () => {
+    const keep = dateSel.value;
+    const fresh = sel("d-dateStyle", dateStyleOptions(locSel.value), keep);
+    dateSel.replaceWith(fresh);
+  });
+  const themeSel = sel("d-theme", [["dark", "Dark"], ["light", "Light"], ["system", "Follow system"]], d.theme);
+  themeSel.addEventListener("change", () => applyTheme({ theme: themeSel.value }));
+  const fromOpts = [["home", "Home"], ["UTC", "UTC"]].concat(work.nodes.filter((n) => n.name && !n.home).map((n) => [n.name, n.name]));
+  box.append(
+    row("Time",
+      sel("d-clock", [["24", "24-hour"], ["12", "12-hour"]], d.clock),
+      check("d-seconds", d.seconds, "Show seconds on cards")),
+    row("Date", dateSel, locSel),
+    row("Look", themeSel,
+      sel("d-motion", [["system", "Reduce motion: follow Firefox"], ["on", "Reduce motion: on"], ["off", "Reduce motion: off"]], d.motion)),
+    row("Globe",
+      check("d-globe-show", d.globe.show, "Show globe"),
+      check("d-globe-spin", d.globe.spin, "Spin"),
+      sel("d-globe-speed", [[0.5, "Slow"], [1, "Normal"], [2, "Fast"]], d.globe.speed),
+      check("d-globe-arcs", d.globe.arcs, "Arcs"),
+      check("d-globe-pulses", d.globe.pulses, "Pulses"),
+      check("d-globe-night", d.globe.night, "Night shading")),
+    row("Pills", sel("d-sort", [["order", "Your order"], ["status", "Online first"], ["tz", "By time zone, west to east"]], d.sortPills)),
+    row("Bottom panel", sel("d-openTab", [["last", "Open on: last used tab"], ["overlap", "Open on: Find a time"], ["convert", "Open on: Convert a time"], ["holidays", "Open on: Upcoming holidays"]], d.openTab)),
+    row("Converter",
+      sel("d-convDuration", [[0, "No length"], [15, "15 min"], [30, "30 min"], [45, "45 min"], [60, "1 hour"], [90, "1h 30m"], [120, "2 hours"], [180, "3 hours"]], d.convDuration),
+      sel("d-convFrom", fromOpts, fromOpts.some(([v]) => v === d.convFrom) ? d.convFrom : "home")),
+  );
+}
+
+function collectDisplay() {
+  const g = (id) => $(id);
+  work.display = {
+    clock: g("d-clock").value,
+    seconds: g("d-seconds").checked,
+    dateStyle: g("d-dateStyle").value,
+    locale: g("d-locale").value,
+    theme: g("d-theme").value,
+    motion: g("d-motion").value,
+    globe: {
+      show: g("d-globe-show").checked,
+      spin: g("d-globe-spin").checked,
+      speed: Number(g("d-globe-speed").value),
+      arcs: g("d-globe-arcs").checked,
+      pulses: g("d-globe-pulses").checked,
+      night: g("d-globe-night").checked,
+    },
+    sortPills: g("d-sort").value,
+    openTab: g("d-openTab").value,
+    convDuration: Number(g("d-convDuration").value),
+    convFrom: g("d-convFrom").value,
+  };
+}
+
 function renderAll() {
+  renderDisplay();
+  if ($("clients")) renderClients();
   $("defaultHours").value = work.defaultHours || DEFAULT_CONFIG.defaultHours;
   $("soonMinutes").value = work.soonMinutes == null ? DEFAULT_CONFIG.soonMinutes : work.soonMinutes;
   renderSites();
@@ -310,6 +558,7 @@ async function reset() {
 
 async function main() {
   work = clone(await loadConfig());
+  applyTheme(mergeDisplay(work.display));
 
   const dl = $("tz-list");
   const zones = Intl.supportedValuesOf ? Intl.supportedValuesOf("timeZone") : [];
@@ -320,6 +569,10 @@ async function main() {
   }
 
   renderAll();
+  $("sites").addEventListener("change", (e) => {
+    const k = e.target.dataset && e.target.dataset.k;
+    if (k === "group" || k === "name") { collect(); renderClients(); }
+  });
   $("defaultHours").addEventListener("input", markDirty);
   $("soonMinutes").addEventListener("input", markDirty);
   $("add-hol").addEventListener("click", () => {

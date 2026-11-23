@@ -48,7 +48,8 @@ function tick() {
     n.dotEl.style.background = s.mark;
     n.timeEl.textContent = n.fmt.hm.format(now);
     n.noteEl.textContent = st.holiday ? st.holiday : (n.status === "online" ? "" : s.text);
-    n.noteEl.style.color = st.holiday ? STATUS.holiday.mark : "";
+    n.noteEl.style.color = st.holiday ? "var(--hol)" : "";
+    if (!st.holiday && st.offDay) n.noteEl.textContent = offDayText(st);
   }
   for (const g of pGroups) {
     const b = groupBadge(g);
@@ -56,12 +57,18 @@ function tick() {
     g.badgeEl.className = "badge " + b.cls;
     g.el.dataset.status = b.status;
   }
+  if (DISPLAY.sortPills !== "order") {
+    const list = document.getElementById("list");
+    const want = sortedGroups(pGroups, DISPLAY.sortPills);
+    if (want.some((g, i) => list.children[i] !== g.el)) for (const g of want) list.appendChild(g.el);
+  }
   document.getElementById("home-time").textContent = pHome.city + " " + pHome.fmt.hm.format(now);
 }
 
 async function main() {
   const cfg = await loadConfig();
   pNodes = prepareNodes(cfg);
+  applyTheme(DISPLAY);
   pHome = pNodes.find((n) => n.home);
   pGroups = groupNodes(pNodes);
   render();

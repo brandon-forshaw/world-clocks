@@ -104,12 +104,32 @@ function build() {
     g.badgeEl.className = "badge off";
     g.badgeEl.textContent = "Offline";
 
-    sum.append(chev, title, sites, g.badgeEl);
+    sum.append(chev, title, sites);
+    if (hasLinks(g)) {
+      const lb = document.createElement("button");
+      lb.className = "links-btn";
+      lb.title = "Links for " + g.name;
+      lb.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleLinksMenu(g, lb);
+      });
+      sum.append(lb);
+      g.linksBtn = lb;
+    }
+    sum.append(g.badgeEl);
 
     const cards = document.createElement("div");
     cards.className = "group-cards";
     g.cardsEl = cards;
-    det.append(sum, cards);
+    det.append(sum);
+    if (hasLinks(g)) {
+      g.linksBar = document.createElement("div");
+      g.linksBar.className = "links-bar";
+      det.append(g.linksBar);
+    }
+    det.append(cards);
+    refreshLinks(g);
     g.el = det;
     root.appendChild(det);
   }
@@ -182,12 +202,158 @@ function buildCard(n, g) {
   return card;
 }
 
+// ---- Links ------------------------------------------------------------------
+// Links belong to a client (its group). A client can list environments
+// (DV02, NP02...); each link has one address for all of them, or one per
+// environment. The environment you last picked is remembered per client.
+const ENV_KEY = "wc-env";
+
+function safeUrl(u) {
+  try { const x = new URL(u); return x.protocol === "https:" || x.protocol === "http:" ? x.href : null; }
+  catch (e) { return null; }
+}
+
+const clientCfg = (g) => CLIENTS[g.name] || {};
+const clientEnvs = (g) => (clientCfg(g).envs || []).filter(Boolean);
+const hasLinks = (g) => (clientCfg(g).links || []).length > 0;
+
+function envFor(g) {
+  const envs = clientEnvs(g);
+  if (!envs.length) return "";
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(ENV_KEY) || "{}"); } catch (e) { /* ignore */ }
+  return envs.includes(saved[g.name]) ? saved[g.name] : envs[0];
+}
+
+function setEnv(g, env) {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(ENV_KEY) || "{}"); } catch (e) { /* ignore */ }
+  saved[g.name] = env;
+  try { localStorage.setItem(ENV_KEY, JSON.stringify(saved)); } catch (e) { /* ignore */ }
+  refreshLinks(g);
+  if (linksMenuFor === g) fillLinksMenu(g);
+}
+
+function linksFor(g, env) {
+  const out = [];
+  for (const l of clientCfg(g).links || []) {
+    const raw = l.url || (l.urls && l.urls[env]) || "";
+    const url = safeUrl(raw);
+    if (url && (l.label || "").trim()) out.push({ label: l.label.trim(), url });
+  }
+  return out;
+}
+
+function linkEl(l, cls) {
+  const a = document.createElement("a");
+  a.className = cls;
+  a.href = l.url;
+  a.target = "_blank";
+  a.rel = "noopener noreferrer";
+  a.title = l.url;
+  a.textContent = l.label;
+  return a;
+}
+
+// Small segmented control for picking an environment.
+function envSwitch(g) {
+  const envs = clientEnvs(g);
+  const box = document.createElement("span");
+  box.className = "env-switch";
+  if (envs.length < 2) {
+    if (envs.length === 1) { const one = document.createElement("span"); one.className = "env-one"; one.textContent = envs[0]; box.append(one); }
+    return box;
+  }
+  const cur = envFor(g);
+  for (const e of envs) {
+    const b = document.createElement("button");
+    b.className = "env-btn" + (e === cur ? " on" : "");
+    b.textContent = e;
+    b.addEventListener("click", (ev) => { ev.preventDefault(); ev.stopPropagation(); setEnv(g, e); });
+    box.append(b);
+  }
+  return box;
+}
+
+// Update the pill's link count and the open pill's links bar.
+function refreshLinks(g) {
+  if (!hasLinks(g)) return;
+  const env = envFor(g);
+  const list = linksFor(g, env);
+  g.linksBtn.textContent = "🔗 " + (env ? env + " · " : "") + list.length;
+  const bar = g.linksBar;
+  bar.innerHTML = "";
+  bar.append(envSwitch(g));
+  if (!list.length) {
+    const none = document.createElement("span");
+    none.className = "links-none";
+    none.textContent = "No links for " + (env || "this client") + ".";
+    bar.append(none);
+  }
+  for (const l of list) bar.append(linkEl(l, "chip-link"));
+}
+
+let linksMenu = null, linksMenuFor = null;
+function closeLinksMenu() {
+  if (linksMenu) linksMenu.remove();
+  linksMenu = null;
+  linksMenuFor = null;
+}
+
+function fillLinksMenu(g) {
+  const m = linksMenu;
+  m.innerHTML = "";
+  if (clientEnvs(g).length) {
+    const head = document.createElement("div");
+    head.className = "lm-envs";
+    head.append(envSwitch(g));
+    m.append(head);
+  }
+  const list = linksFor(g, envFor(g));
+  if (!list.length) {
+    const none = document.createElement("div");
+    none.className = "lm-head";
+    none.textContent = "No links for this environment";
+    m.append(none);
+  }
+  for (const l of list) {
+    const a = linkEl(l, "lm-item");
+    const host = document.createElement("span");
+    host.textContent = new URL(l.url).hostname;
+    a.append(host);
+    a.addEventListener("click", () => setTimeout(closeLinksMenu, 0));
+    m.append(a);
+  }
+}
+
+function toggleLinksMenu(g, btn) {
+  if (linksMenuFor === g) { closeLinksMenu(); return; }
+  closeLinksMenu();
+  linksMenu = document.createElement("div");
+  linksMenu.className = "links-menu";
+  linksMenuFor = g;
+  fillLinksMenu(g);
+  document.body.append(linksMenu);
+  const r = btn.getBoundingClientRect();
+  const left = Math.min(r.left + window.scrollX, window.scrollX + document.documentElement.clientWidth - linksMenu.offsetWidth - 12);
+  linksMenu.style.left = Math.max(8, left) + "px";
+  linksMenu.style.top = (r.bottom + window.scrollY + 6) + "px";
+}
+document.addEventListener("click", (e) => { if (linksMenu && !linksMenu.contains(e.target)) closeLinksMenu(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeLinksMenu(); });
+
 function updateGroups() {
   for (const g of groups) {
     const b = groupBadge(g);
     g.badgeEl.textContent = b.text;
     g.badgeEl.className = "badge " + b.cls;
     g.el.dataset.status = b.status;
+  }
+  if (DISPLAY.sortPills !== "order") {
+    const want = sortedGroups(groups, DISPLAY.sortPills);
+    const root = document.getElementById("clocks");
+    const have = [...root.querySelectorAll(":scope > details.group")];
+    if (want.some((g, i) => have[i] !== g.el)) for (const g of want) root.appendChild(g.el);
   }
 }
 
@@ -227,14 +393,14 @@ function tick() {
 
     n.barNow.style.left = (st.minutes / 1440 * 100) + "%";
     n.barNow.style.background = s.mark;
-    n.barEl.classList.toggle("off-day", st.weekend && !n.hrs.allDay);
+    n.barEl.classList.toggle("off-day", st.offDay);
     n.barEl.classList.toggle("holiday", !!st.holiday);
 
     // next holiday only changes when the local date does
     if (n.nextHolYmd !== st.ymd) {
       n.nextHolYmd = st.ymd;
       const nh = nextHoliday(n, st.ymd);
-      n.nextHolEl.textContent = nh ? "Next: " + nh : "";
+      n.nextHolEl.textContent = nh ? "Next Holiday: " + nh : "";
     }
 
     n.labelT.textContent = n.fmt.hm.format(now);
@@ -252,6 +418,7 @@ function tick() {
   }
   updateGroups();
   updateOverlap(now);
+  renderHolidaysTab(false);
 }
 
 // ---- Who's online together --------------------------------------------------
@@ -325,15 +492,6 @@ function computeOverlap(now) {
   return { text: "No shared window in the next 14 days. Their hours never line up.", window: null };
 }
 
-// "Tue 29 Dec" (or "Tue 29 Dec 2026"), built from parts so browsers that put a
-// comma after the weekday ("Tue, 29 Dec 2026") all come out the same.
-function dayLabel(date, tz, withYear) {
-  const opts = { timeZone: tz, weekday: "short", day: "numeric", month: "short" };
-  if (withYear) opts.year = "numeric";
-  const p = new Intl.DateTimeFormat("en-GB", opts).formatToParts(date);
-  const g = (t) => (p.find((x) => x.type === t) || {}).value;
-  return [g("weekday"), g("day"), g("month"), withYear ? g("year") : null].filter(Boolean).join(" ");
-}
 
 function hmIn(date, tz) {
   return new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(date);
@@ -341,15 +499,41 @@ function hmIn(date, tz) {
 
 // "Tue 29 Dec 14:00-17:30", or across midnight "Tue 29 Dec 22:00 - Wed 30 Dec 01:30".
 // With withYear: "Tue 29 Dec 2026, 14:00-17:30". Without an end: "Tue 29 Dec 14:00".
-function fmtRange(tz, a, b, withYear) {
-  const sep = withYear ? ", " : " ";
-  const da = dayLabel(a, tz, withYear);
-  if (!b) return da + sep + hmIn(a, tz);
-  const db = dayLabel(b, tz, withYear);
-  return da === db
-    ? da + sep + hmIn(a, tz) + "-" + hmIn(b, tz)
-    : da + sep + hmIn(a, tz) + " - " + db + sep + hmIn(b, tz);
+// ---- Copied text: "Tuesday 29 December 2026, 14:00-15:00 GMT" ----
+// Fixed 24-hour en-GB format whatever the display settings, so it reads the
+// same to everyone.
+function fullDay(date, tz) {
+  const p = new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "long", day: "numeric", month: "long", year: "numeric" }).formatToParts(date);
+  const g = (t) => (p.find((x) => x.type === t) || {}).value;
+  return [g("weekday"), g("day"), g("month"), g("year")].join(" ");
 }
+
+// A zone's name at a moment: a letters-only abbreviation where one exists
+// (GMT, BST, EET, EST, MDT, UTC), otherwise the full name (India Standard Time).
+function zoneName(tz, date) {
+  const get = (loc, style) => {
+    try {
+      const p = new Intl.DateTimeFormat(loc, { timeZone: tz, timeZoneName: style }).formatToParts(date);
+      return (p.find((x) => x.type === "timeZoneName") || {}).value || "";
+    } catch (e) { return ""; }
+  };
+  for (const loc of ["en-GB", "en-US"]) {
+    const n = get(loc, "short");
+    if (/^[A-Z]{2,5}$/.test(n)) return n;
+  }
+  return get("en-GB", "long") || tz;
+}
+
+function fullRange(tz, a, b) {
+  const da = fullDay(a, tz);
+  const z = zoneName(tz, a);
+  if (!b) return da + ", " + hmIn(a, tz) + " " + z;
+  const db = fullDay(b, tz);
+  return da === db
+    ? da + ", " + hmIn(a, tz) + "-" + hmIn(b, tz) + " " + z
+    : da + ", " + hmIn(a, tz) + " - " + db + ", " + hmIn(b, tz) + " " + z;
+}
+
 
 // Why a site isn't available for the whole of start..end, or "" if it is.
 function availabilityNote(n, start, end) {
@@ -359,7 +543,7 @@ function availabilityNote(n, start, end) {
     const st = siteState(n, t);
     if (st.status === "online" || st.status === "leaving") continue;
     if (st.holiday) return "Holiday: " + st.holiday;
-    if (st.weekend && !n.hrs.allDay) return "Weekend";
+    if (st.offDay) return offDayText(st);
     return "Out of hours";
   }
   return "";
@@ -371,15 +555,15 @@ function cabLines(sites, start, end, extraZones) {
   const notes = sites.map((n) => availabilityNote(n, start, end));
   const allIn = notes.every((x) => !x);
   const lines = [
-    "Proposed change window: " + fmtRange("UTC", start, end, true) + " UTC" +
+    "Proposed change window: " + fullRange("UTC", start, end) +
       (end ? " (" + fmtDur(Math.round((end - start) / 60000)) + ")" : ""),
     allIn ? "All parties within working hours:" : "Local times:",
   ];
   sites.forEach((n, i) => {
-    lines.push("- " + n.name + (n.city ? " (" + n.city + ")" : "") + ": " + fmtRange(n.tz, start, end) +
+    lines.push("- " + n.name + (n.city ? " (" + n.city + ")" : "") + ": " + fullRange(n.tz, start, end) +
       (notes[i] ? " [" + notes[i] + "]" : ""));
   });
-  for (const z of extraZones || []) lines.push("- " + z.label + ": " + fmtRange(z.tz, start, end));
+  for (const z of extraZones || []) lines.push("- " + z.label + ": " + fullRange(z.tz, start, end));
   return lines.join("\n");
 }
 
@@ -492,8 +676,9 @@ function buildPanel() {
   bar.className = "tabs";
   root.append(bar);
   for (const [key, label, builder] of [
-    ["overlap", "Who's online together", buildOverlap],
-    ["convert", "Time converter", buildConverter],
+    ["overlap", "Find a time", buildOverlap],
+    ["convert", "Convert a time", buildConverter],
+    ["holidays", "Upcoming holidays", buildHolidays],
   ]) {
     const btn = document.createElement("button");
     btn.className = "tab";
@@ -506,9 +691,111 @@ function buildPanel() {
     root.append(body);
     tabEls[key] = { btn, body };
   }
-  let start = "overlap";
-  try { start = localStorage.getItem(TAB_KEY) || "overlap"; } catch (e) { /* ignore */ }
+  let start = DISPLAY.openTab;
+  if (start === "last") {
+    start = "overlap";
+    try { start = localStorage.getItem(TAB_KEY) || "overlap"; } catch (e) { /* ignore */ }
+  }
   showTab(tabEls[start] ? start : "overlap");
+}
+
+// ---- Upcoming holidays ---------------------------------------------------------
+// Public holidays over the next few weeks for every site that observes them,
+// skipping ones that land on a day the site doesn't work anyway.
+const HOL_KEY = "wc-holiday-days";
+const holEls = {};
+let holRenderedFor = "";
+
+function buildHolidays(root) {
+  const top = document.createElement("div");
+  top.className = "hol-top";
+  holEls.range = document.createElement("select");
+  for (const [v, t] of [[30, "Next 30 days"], [60, "Next 60 days"], [90, "Next 90 days"]]) {
+    const o = document.createElement("option");
+    o.value = v;
+    o.textContent = t;
+    holEls.range.append(o);
+  }
+  let saved = 60;
+  try { saved = Number(localStorage.getItem(HOL_KEY)) || 60; } catch (e) { /* ignore */ }
+  holEls.range.value = String(saved);
+  holEls.range.addEventListener("change", () => {
+    try { localStorage.setItem(HOL_KEY, holEls.range.value); } catch (e) { /* ignore */ }
+    renderHolidaysTab(true);
+  });
+  const hint = document.createElement("span");
+  hint.className = "hol-hint";
+  hint.textContent = "Only days the site would otherwise be working.";
+  top.append(holEls.range, hint);
+  holEls.list = document.createElement("div");
+  holEls.list.className = "hol-list";
+  root.append(top, holEls.list);
+  renderHolidaysTab(true);
+}
+
+function upcomingHolidays(days) {
+  const today = localClock(HOME, new Date()).ymd;
+  const [y, m, d] = today.split("-").map(Number);
+  const out = new Map();
+  for (let i = 0; i < days; i++) {
+    const dt = new Date(Date.UTC(y, m - 1, d + i));
+    const ymd = dt.toISOString().slice(0, 10);
+    for (const n of nodes) {
+      if (!n.observes || !n.region) continue;
+      if (!n.hrs.allDay && !n.days.includes(dt.getUTCDay())) continue;
+      const name = Holidays.getHoliday(n.region, ymd);
+      if (!name) continue;
+      const k = ymd + "|" + name;
+      if (!out.has(k)) out.set(k, { ymd, date: dt, name, offset: i, nodes: [] });
+      out.get(k).nodes.push(n);
+    }
+  }
+  return [...out.values()];
+}
+
+function renderHolidaysTab(force) {
+  if (!holEls.list || typeof Holidays === "undefined") return;
+  const today = localClock(HOME, new Date()).ymd;
+  if (!force && holRenderedFor === today) return;
+  holRenderedFor = today;
+  const list = holEls.list;
+  list.innerHTML = "";
+  const days = Number(holEls.range.value) || 60;
+  const items = upcomingHolidays(days);
+  if (!items.length) {
+    const p = document.createElement("div");
+    p.className = "hol-none";
+    p.textContent = "No public holidays for your sites in the next " + days + " days.";
+    list.append(p);
+    return;
+  }
+  const df = dateFormatter("UTC");
+  for (const h of items) {
+    const row = document.createElement("div");
+    row.className = "hol-row";
+    const date = document.createElement("span");
+    date.className = "hol-date";
+    date.textContent = df.format(h.date);
+    const when = document.createElement("span");
+    when.className = "hol-when";
+    when.textContent = h.offset === 0 ? "Today" : h.offset === 1 ? "Tomorrow" : "In " + h.offset + " days";
+    const name = document.createElement("span");
+    name.className = "hol-name-col";
+    name.textContent = h.name;
+    const who = document.createElement("span");
+    who.className = "hol-who";
+    for (const n of h.nodes) {
+      const g = groups.find((x) => x.nodes.includes(n));
+      const chip = document.createElement("button");
+      chip.className = "hol-chip";
+      chip.textContent = n.home ? "Home" : g.nodes.length > 1 ? g.name + " (" + (n.city || siteLabel(n, g)) + ")" : g.name;
+      chip.title = "Spin the globe to " + (n.city || n.name);
+      chip.addEventListener("click", () => focusGlobe(n));
+      who.append(chip);
+    }
+    row.append(date, when, name, who);
+    list.append(row);
+  }
 }
 
 // ---- Time converter -----------------------------------------------------------
@@ -577,8 +864,16 @@ function fromTz() {
 }
 
 function saveConv() {
-  try { localStorage.setItem(CONV_KEY, JSON.stringify({ from: conv.from, duration: conv.duration, custom: conv.custom, excluded: conv.excluded })); }
+  try { localStorage.setItem(CONV_KEY, JSON.stringify({ custom: conv.custom, excluded: conv.excluded })); }
   catch (e) { /* ignore */ }
+}
+
+// The "from" zone the converter starts on, from settings.
+function defaultFrom() {
+  const f = DISPLAY.convFrom;
+  if (f === "UTC") return "UTC";
+  const l = f && f !== "home" ? convLocs.find((x) => x.nodes.some((n) => n.name === f)) : null;
+  return "loc:" + (l || convLocs[0]).key;
 }
 
 function setConvNow() {
@@ -592,10 +887,13 @@ function setConvNow() {
 
 function buildConverter(root) {
   convLocs = buildLocations();
-  try { Object.assign(conv, JSON.parse(localStorage.getItem(CONV_KEY) || "{}")); } catch (e) { /* ignore */ }
-  if (!conv.from || (conv.from.startsWith("loc:") && !convLocs.some((l) => "loc:" + l.key === conv.from))) {
-    conv.from = "loc:" + convLocs[0].key;
-  }
+  try {
+    const saved = JSON.parse(localStorage.getItem(CONV_KEY) || "{}");
+    conv.custom = saved.custom || "";
+    conv.excluded = Array.isArray(saved.excluded) ? saved.excluded : [];
+  } catch (e) { /* ignore */ }
+  conv.from = defaultFrom();
+  conv.duration = DURATIONS.some(([v]) => v === Number(DISPLAY.convDuration)) ? Number(DISPLAY.convDuration) : 60;
   setConvNow();
 
   const inputs = document.createElement("div");
@@ -693,7 +991,7 @@ function buildConverter(root) {
   };
   convEls.preview = document.createElement("div");
   convEls.preview.className = "conv-preview";
-  actions.append(convEls.preview, copyBtnFor("Copy one line", convOneLine), copyBtnFor("Copy as list", convList), copyBtnFor("Copy for change request", convCab));
+  actions.append(convEls.preview, copyBtnFor("Copy as list", convList), copyBtnFor("Copy for change request", convCab));
 
   root.append(inputs, convEls.rows, actions);
   syncConverterInputs();
@@ -720,12 +1018,7 @@ function convRows() {
   return rows;
 }
 
-function convRange(tz, start, end) {
-  const s = zonedParts(start, tz).hm;
-  return end ? s + "-" + zonedParts(end, tz).hm : s;
-}
 
-const convDayFmt = (tz) => ({ format: (d) => dayLabel(d, tz) });
 
 let convState = null;  // { rows, start, end } for the copy buttons
 
@@ -757,7 +1050,7 @@ function updateConverter() {
       }
       status = best.status;
       note = best.holiday ? "Holiday: " + best.holiday
-        : (best.status === "offline" && best.weekend ? "Weekend" : CONV_TEXT[best.status]);
+        : (best.status === "offline" && best.offDay ? offDayText(best) : CONV_TEXT[best.status]);
     }
 
     const line = document.createElement("label");
@@ -786,17 +1079,18 @@ function updateConverter() {
 
     const time = document.createElement("span");
     time.className = "conv-time";
-    time.textContent = convRange(r.tz, start, end);
+    const tf = timeFormatter(r.tz, false);
+    time.textContent = end ? tf.format(start) + "-" + tf.format(end) : tf.format(start);
 
     const day = document.createElement("span");
     day.className = "conv-day";
-    day.textContent = convDayFmt(r.tz).format(start) + (dayDiff ? " (" + (dayDiff > 0 ? "+" : "") + dayDiff + " day)" : "");
+    day.textContent = dateFormatter(r.tz).format(start) + (dayDiff ? " (" + (dayDiff > 0 ? "+" : "") + dayDiff + " day)" : "");
 
     const st = document.createElement("span");
     st.className = "conv-status";
     st.textContent = note;
     st.title = note;
-    if (status) st.style.color = STATUS[status].mark;
+    if (status) st.style.color = "var(--" + STATUS[status].cls + ")";
 
     line.append(cb, where, time, day, st);
     box.append(line);
@@ -809,31 +1103,12 @@ function includedRows() {
   return convState ? convState.rows.filter((r) => !conv.excluded.includes(r.key)) : [];
 }
 
-// "Tue 29 Dec: UK 14:00-15:00 / Toronto 09:00-10:00 / Melbourne 01:00-02:00 (Wed 30 Dec)"
-function convOneLine() {
-  const rows = includedRows();
-  if (!rows.length) return "";
-  const { start, end } = convState;
-  const refDay = convDayFmt(rows[0].tz).format(start);
-  const parts = rows.map((r) => {
-    const d = convDayFmt(r.tz).format(start);
-    return r.label + " " + convRange(r.tz, start, end) + (d !== refDay ? " (" + d + ")" : "");
-  });
-  return refDay + ": " + parts.join(" / ");
-}
-
 // Short list for an email or invite body.
 function convList() {
   const rows = includedRows();
   if (!rows.length) return "";
   const { start, end } = convState;
-  const refDay = convDayFmt(rows[0].tz).format(start);
-  const lines = [refDay + (end ? " (" + fmtDur(Math.round((end - start) / 60000)) + ")" : "")];
-  for (const r of rows) {
-    const d = convDayFmt(r.tz).format(start);
-    lines.push("- " + r.label + ": " + convRange(r.tz, start, end) + (d !== refDay ? " (" + d + ")" : ""));
-  }
-  return lines.join("\n");
+  return rows.map((r) => "- " + r.label + ": " + fullRange(r.tz, start, end)).join("\n");
 }
 
 // From the converter: the time you picked, for every client in the ticked cities.
@@ -848,7 +1123,7 @@ function convCab() {
 }
 
 function updatePreview() {
-  convEls.preview.textContent = convOneLine() || "Tick at least one place to copy.";
+  convEls.preview.textContent = includedRows().length ? "" : "Tick at least one place to copy.";
 }
 
 // ---- Sun position (for day/night shading) -----------------------------------
@@ -898,8 +1173,13 @@ function initGlobe() {
     .then((topo) => { land = topojson.feature(topo, topo.objects.land); })
     .catch((e) => console.warn("Could not load world map:", e));
 
-  let rotation = [0, -15];
-  let autoRotate = true;
+  const G = DISPLAY.globe;
+  const still = reduceMotion();
+  const SPIN = G.spin && !still;
+  const SPEED = 0.006 * (Number(G.speed) || 1);
+  const PULSES = G.arcs && G.pulses && !still;
+  let rotation = [-HOME.coords[0], -15];
+  let autoRotate = SPIN;
   let pulseT = 0;        // 0..1 position of the pulse along each arc
   let anim = null;       // in-flight spin to a site
   let resumeTimer = null;
@@ -911,11 +1191,11 @@ function initGlobe() {
     if (!node) return;
     const target = [-node.coords[0], -node.coords[1]];
     const dl = ((target[0] - rotation[0] + 540) % 360) - 180;  // shortest way round
-    anim = { from: rotation.slice(), dl, dp: target[1] - rotation[1], t0: performance.now(), dur: 900 };
-    flash = { node, t0: performance.now() + 700 };
+    anim = { from: rotation.slice(), dl, dp: target[1] - rotation[1], t0: performance.now(), dur: still ? 1 : 900 };
+    flash = still ? null : { node, t0: performance.now() + 700 };
     autoRotate = false;
     clearTimeout(resumeTimer);
-    resumeTimer = setTimeout(() => { autoRotate = true; }, RESUME_MS);
+    resumeTimer = setTimeout(() => { autoRotate = SPIN; }, RESUME_MS);
   };
 
   // ---- Label placement ----
@@ -1108,7 +1388,7 @@ function initGlobe() {
       ctx.fill();
     }
 
-    drawNight();
+    if (G.night) drawNight();
 
     ctx.beginPath();
     path({ type: "Sphere" });
@@ -1125,9 +1405,8 @@ function initGlobe() {
       const s = STATUS[n.status] || STATUS.offline;
       const peak = arcPeak(d3.geoDistance(HOME.coords, n.coords));
       const interp = d3.geoInterpolate(HOME.coords, n.coords);
-      drawArc(interp, peak, s.line, rot, R);
-      const t = (pulseT + arcIndex * 0.17) % 1;
-      drawPulse(interp, peak, t, s.mark, rot, R);
+      if (G.arcs) drawArc(interp, peak, s.line, rot, R);
+      if (PULSES) drawPulse(interp, peak, (pulseT + arcIndex * 0.17) % 1, s.mark, rot, R);
       arcIndex++;
     }
 
@@ -1192,7 +1471,7 @@ function initGlobe() {
       rotation[1] = anim.from[1] + anim.dp * e;
       if (k >= 1) anim = null;
     } else if (autoRotate) {
-      rotation[0] += dt * 0.006;
+      rotation[0] += dt * SPEED;
       if (rotation[0] > 180) rotation[0] -= 360;
     }
     pulseT = (pulseT + dt * 0.0004) % 1;  // ~2.5s for a pulse to cross an arc
@@ -1222,7 +1501,7 @@ function initGlobe() {
     dragging = false;
     canvas.releasePointerCapture(e.pointerId);
   });
-  canvas.addEventListener("dblclick", () => { autoRotate = true; });
+  canvas.addEventListener("dblclick", () => { autoRotate = SPIN; });
 
   requestAnimationFrame(frame);
 }
@@ -1233,10 +1512,10 @@ async function main() {
   const cfg = await loadConfig();
   nodes = prepareNodes(cfg);
   HOME = nodes.find((n) => n.home);
-  overlapFmt = new Intl.DateTimeFormat("en-GB", {
-    timeZone: HOME.tz, weekday: "short", day: "numeric", month: "short",
-    hour: "2-digit", minute: "2-digit", hour12: false,
-  });
+  applyTheme(DISPLAY);
+  const homeDate = dateFormatter(HOME.tz), homeTime = timeFormatter(HOME.tz, false);
+  overlapFmt = { format: (d) => homeDate.format(d) + ", " + homeTime.format(d) };
+  document.body.classList.toggle("compact", !DISPLAY.globe.show);
   loadSelected();
 
   build();
@@ -1245,7 +1524,9 @@ async function main() {
   tick();
   setInterval(tick, 1000);
 
-  if (typeof d3 !== "undefined" && typeof topojson !== "undefined") {
+  if (!DISPLAY.globe.show) {
+    // compact mode: no globe
+  } else if (typeof d3 !== "undefined" && typeof topojson !== "undefined") {
     try {
       initGlobe();
     } catch (e) {

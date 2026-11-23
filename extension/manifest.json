@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "World Clocks",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "New tab globe showing clients' local times, working hours, public holidays and shared meeting windows.",
   "icons": {
     "48": "icons/icon-48.png",

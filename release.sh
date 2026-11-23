@@ -15,6 +15,11 @@ if git rev-parse "v$VERSION" >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! grep -q "^## $VERSION\s*$" CHANGELOG.md 2>/dev/null; then
+  echo "Add a '## $VERSION' section to CHANGELOG.md first (it becomes the release notes)." >&2
+  exit 1
+fi
+
 # Only the top-level "version" key ("strict_min_version" doesn't match).
 perl -0pi -e 's/("version":\s*")[^"]+(")/${1}'"$VERSION"'${2}/' extension/manifest.json
 grep -q "\"version\": \"$VERSION\"" extension/manifest.json || { echo "Couldn't set the version in manifest.json" >&2; exit 1; }
