@@ -69,9 +69,10 @@ let CLIENTS = {};
 
 // ---- Link addresses ----
 // A link is { label, url } (one address), { label, urls: { ENV: url } } (one per
-// environment) or { label, pattern } where the pattern holds $environment (or
+// environment) or { label, pattern, skip? } where the pattern holds $environment (or
 // $env) and $client, e.g. https://$environment-bosadmin.$client.example.net.
-// Both are lower-cased when filled in.
+// Both are lower-cased when filled in. skip lists environments the pattern
+// doesn't apply to, so environments added later are included by default.
 const PATTERN_ENV = /\$(environment|env)\b/gi;
 const PATTERN_CLIENT = /\$client\b/gi;
 
@@ -90,7 +91,7 @@ function expandPattern(pattern, env, short) {
 // The address a link opens in an environment ("" if it has none there).
 function linkUrl(l, env, client) {
   const t = linkType(l);
-  if (t === "pattern") return expandPattern(l.pattern, env, (client || {}).short);
+  if (t === "pattern") return (l.skip || []).includes(env) ? "" : expandPattern(l.pattern, env, (client || {}).short);
   if (t === "env") return (l.urls || {})[env] || "";
   return l.url || "";
 }
@@ -205,6 +206,7 @@ function validateConfig(cfg) {
         else if (usesEnv && !envs.length) errs.push(where + ": the pattern uses $environment, so add the client's environments.");
         else if (usesClient && !(c.short || "").trim()) errs.push(where + ": the pattern uses $client, so add the client's short name.");
         else if (!isWebUrl(expandPattern(pat, envs[0] || "", c.short))) errs.push(where + ": the pattern must start with https:// (or http://).");
+        else if (envs.length && envs.every((e) => (l.skip || []).includes(e))) errs.push(where + ": tick at least one environment for the pattern.");
         return;
       }
       const urls = t === "env" ? Object.values(l.urls || {}) : [l.url];

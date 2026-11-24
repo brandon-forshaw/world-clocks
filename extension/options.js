@@ -239,7 +239,9 @@ function renderClients() {
     if (links.length) {
       const hdr = (t) => { const h = document.createElement("span"); h.className = "lt-h"; h.textContent = t; return h; };
       grid.append(hdr("Label"), hdr("Type"));
-      if (envs.length) for (const e of envs) grid.append(hdr(e)); else grid.append(hdr("Address"));
+      const perEnv = envs.length && links.some((l) => linkType(l) === "env");
+      if (perEnv) for (const e of envs) grid.append(hdr(e));
+      else { const a = hdr("Address"); a.style.gridColumn = "span " + cols; grid.append(a); }
       grid.append(hdr(""));
     }
     links.forEach((l, j) => {
@@ -248,6 +250,7 @@ function renderClients() {
       const row = document.createElement("div");
       row.className = "lt-row";
       row.dataset.type = type;
+      row.dataset.skip = JSON.stringify(type === "pattern" ? (l.skip || []).filter((e) => envs.includes(e)) : []);
       row.append(input("text", l.label, { placeholder: "e.g. BOS admin", "data-l": "label" }));
 
       const typeSel = document.createElement("select");
@@ -323,10 +326,27 @@ function updatePreviews(box) {
     if (PATTERN_CLIENT.test(pat) && !short) { PATTERN_CLIENT.lastIndex = 0; prev.textContent = "Add the client's short name to fill in $client."; prev.classList.add("warn"); continue; }
     PATTERN_CLIENT.lastIndex = 0;
     prev.classList.remove("warn");
+    const skip = JSON.parse(row.dataset.skip || "[]");
     for (const e of envs.length ? envs : [""]) {
-      const line = document.createElement("div");
+      const line = document.createElement("label");
+      line.className = "pv-line" + (skip.includes(e) ? " skipped" : "");
       const url = expandPattern(pat, e, short);
-      if (e) { const tag = document.createElement("b"); tag.textContent = e; line.append(tag); }
+      if (e) {
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = !skip.includes(e);
+        cb.title = "Use the pattern for " + e;
+        cb.addEventListener("change", () => {
+          const now = JSON.parse(row.dataset.skip || "[]").filter((x) => x !== e);
+          if (!cb.checked) now.push(e);
+          row.dataset.skip = JSON.stringify(now);
+          line.classList.toggle("skipped", !cb.checked);
+          markDirty();
+        });
+        const tag = document.createElement("b");
+        tag.textContent = e;
+        line.append(cb, tag);
+      }
       const code = document.createElement("span");
       code.textContent = url;
       if (!isWebUrl(url)) code.className = "bad";
@@ -371,6 +391,7 @@ function collectClients() {
       if (want === "env" && !envs.length) want = "one";
       // What the row holds now, in its current (rendered) type
       let one = "", urls = {}, pattern = "";
+      const skip = JSON.parse(row.dataset.skip || "[]").filter((e) => envs.includes(e));
       if (was === "env") {
         for (const u of row.querySelectorAll("[data-env]")) if (u.value.trim()) urls[u.dataset.env] = u.value.trim();
       } else if (was === "pattern") pattern = row.querySelector("[data-l=pattern]").value.trim();
@@ -379,9 +400,13 @@ function collectClients() {
       let link;
       if (want === "pattern") {
         link = { label, pattern: was === "pattern" ? pattern : was === "env" ? guessPattern(urls, envs, short) : one };
+        // keep unticked environments; from per-environment, skip the empty ones
+        const sk = was === "pattern" ? skip : was === "env" ? envs.filter((e) => !urls[e]) : [];
+        // (all unticked is kept so validation can flag it; from per-environment, all empty means none set)
+        if (sk.length && (was === "pattern" || sk.length < envs.length)) link.skip = sk;
       } else if (want === "env") {
         if (was === "env") link = { label, urls };
-        else link = { label, urls: Object.fromEntries(envs.map((e) => [e, was === "pattern" ? expandPattern(pattern, e, short) : one])) };
+        else link = { label, urls: Object.fromEntries(envs.filter((e) => !(was === "pattern" && skip.includes(e))).map((e) => [e, was === "pattern" ? expandPattern(pattern, e, short) : one])) };
         for (const k of Object.keys(link.urls)) if (!envs.includes(k) || !link.urls[k]) delete link.urls[k];
       } else {
         link = { label, url: was === "one" ? one : was === "env" ? (Object.values(urls)[0] || "") : expandPattern(pattern, envs[0] || "", short) };

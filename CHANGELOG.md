@@ -3,6 +3,12 @@
 Each release needs a section here before running `release.sh`. The section is
 sent to Mozilla as the version's release notes and used for the GitHub release.
 
+## 1.8.1
+
+- Pattern links: tick which environments a pattern applies to. Unticked ones are left out of the links menu for that environment, and new environments are included automatically
+- Switching a per-environment link to a pattern leaves the environments that had no address unticked
+- Settings: environment column headings only show when a client has a per-environment link
+
 ## 1.8.0
 
 - Pattern links: one address with $environment and $client in it, filled in for each environment, with a live preview on the settings page

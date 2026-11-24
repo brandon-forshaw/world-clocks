@@ -230,7 +230,10 @@ input:disabled { opacity: 0.4; }
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   line-height: 1.5;
 }
-.lt-preview b { display: inline-block; min-width: 52px; font-weight: 600; color: var(--text); font-family: inherit; }
+.lt-preview .pv-line { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.lt-preview .pv-line input { margin: 0; accent-color: #3ddc84; }
+.lt-preview b { display: inline-block; min-width: 44px; font-weight: 600; color: var(--text); font-family: inherit; }
+.lt-preview .pv-line.skipped span, .lt-preview .pv-line.skipped b { opacity: 0.4; text-decoration: line-through; }
 .lt-preview .bad, .lt-preview.warn { color: var(--leave); }
 .client-head b { font-size: 0.88rem; }
 .ltable { display: grid; gap: 6px 8px; align-items: center; margin-bottom: 8px; }
