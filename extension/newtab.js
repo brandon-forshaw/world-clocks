@@ -237,8 +237,7 @@ function setEnv(g, env) {
 function linksFor(g, env) {
   const out = [];
   for (const l of clientCfg(g).links || []) {
-    const raw = l.url || (l.urls && l.urls[env]) || "";
-    const url = safeUrl(raw);
+    const url = safeUrl(linkUrl(l, env, clientCfg(g)));
     if (url && (l.label || "").trim()) out.push({ label: l.label.trim(), url });
   }
   return out;

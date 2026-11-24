@@ -220,7 +220,18 @@ input:disabled { opacity: 0.4; }
 
 /* ---- Client links ---- */
 .client { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; margin-bottom: 10px; }
-.client-head { display: grid; grid-template-columns: 200px 1fr; gap: 10px; align-items: center; margin-bottom: 8px; }
+.client-head { display: grid; grid-template-columns: 200px 1fr 220px; gap: 10px; align-items: center; margin-bottom: 8px; }
+.ltable select { width: 100%; }
+.lt-preview {
+  grid-column: 3 / -1;
+  margin: -2px 0 6px;
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  line-height: 1.5;
+}
+.lt-preview b { display: inline-block; min-width: 52px; font-weight: 600; color: var(--text); font-family: inherit; }
+.lt-preview .bad, .lt-preview.warn { color: var(--leave); }
 .client-head b { font-size: 0.88rem; }
 .ltable { display: grid; gap: 6px 8px; align-items: center; margin-bottom: 8px; }
 .lt-row { display: contents; }

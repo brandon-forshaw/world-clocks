@@ -67,6 +67,38 @@ function mergeDisplay(d) {
 // Links and environments per client (group name), set by prepareNodes().
 let CLIENTS = {};
 
+// ---- Link addresses ----
+// A link is { label, url } (one address), { label, urls: { ENV: url } } (one per
+// environment) or { label, pattern } where the pattern holds $environment (or
+// $env) and $client, e.g. https://$environment-bosadmin.$client.example.net.
+// Both are lower-cased when filled in.
+const PATTERN_ENV = /\$(environment|env)\b/gi;
+const PATTERN_CLIENT = /\$client\b/gi;
+
+function linkType(l) {
+  if (l.pattern !== undefined) return "pattern";
+  if (l.urls !== undefined) return "env";
+  return "one";
+}
+
+function expandPattern(pattern, env, short) {
+  return (pattern || "")
+    .replace(PATTERN_ENV, (env || "").toLowerCase())
+    .replace(PATTERN_CLIENT, (short || "").toLowerCase());
+}
+
+// The address a link opens in an environment ("" if it has none there).
+function linkUrl(l, env, client) {
+  const t = linkType(l);
+  if (t === "pattern") return expandPattern(l.pattern, env, (client || {}).short);
+  if (t === "env") return (l.urls || {})[env] || "";
+  return l.url || "";
+}
+
+function isWebUrl(u) {
+  try { const x = new URL(u); return x.protocol === "https:" || x.protocol === "http:"; } catch (e) { return false; }
+}
+
 // Current display settings, set by prepareNodes().
 let DISPLAY = mergeDisplay({});
 const displayLocale = () => DISPLAY.locale || undefined;
@@ -159,17 +191,29 @@ function validateConfig(cfg) {
     if (!h || !(h.name || "").trim()) errs.push(where + ": needs a name.");
   });
   for (const [client, c] of Object.entries(cfg.clients || {})) {
+    const envs = (c.envs || []).filter(Boolean);
     (c.links || []).forEach((l, j) => {
       const where = client + ", link " + (j + 1) + (l.label ? " (" + l.label + ")" : "");
       if (!(l.label || "").trim()) errs.push(where + ": needs a label.");
-      const urls = l.url !== undefined ? [l.url] : Object.values(l.urls || {});
+      const t = linkType(l);
+      if (t === "pattern") {
+        const pat = (l.pattern || "").trim();
+        PATTERN_ENV.lastIndex = 0; PATTERN_CLIENT.lastIndex = 0;
+        const usesEnv = PATTERN_ENV.test(pat), usesClient = PATTERN_CLIENT.test(pat);
+        PATTERN_ENV.lastIndex = 0; PATTERN_CLIENT.lastIndex = 0;
+        if (!pat) errs.push(where + ": needs a pattern.");
+        else if (usesEnv && !envs.length) errs.push(where + ": the pattern uses $environment, so add the client's environments.");
+        else if (usesClient && !(c.short || "").trim()) errs.push(where + ": the pattern uses $client, so add the client's short name.");
+        else if (!isWebUrl(expandPattern(pat, envs[0] || "", c.short))) errs.push(where + ": the pattern must start with https:// (or http://).");
+        return;
+      }
+      const urls = t === "env" ? Object.values(l.urls || {}) : [l.url];
       if (!urls.filter(Boolean).length) errs.push(where + ": needs at least one address.");
       for (const u of urls.filter(Boolean)) {
-        let ok = false;
-        try { const x = new URL(u); ok = x.protocol === "https:" || x.protocol === "http:"; } catch (e) { /* bad */ }
-        if (!ok) errs.push(where + ": '" + u + "' must start with https:// (or http://).");
+        if (!isWebUrl(u)) errs.push(where + ": '" + u + "' must start with https:// (or http://).");
       }
     });
+    if (c.short && !/^[a-z0-9-]+$/i.test(c.short)) errs.push(client + ": short name can only use letters, numbers and hyphens.");
   }
   const homes = cfg.nodes.filter((n) => n.home).length;
   if (homes !== 1) errs.push("Exactly one site must be marked as home (" + homes + " are).");

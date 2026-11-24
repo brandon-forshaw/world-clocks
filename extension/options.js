@@ -207,6 +207,8 @@ function showErrors(errs) {
 const groupNames = () => [...new Set(work.nodes.map((n) => (n.group || n.name || "").trim()).filter(Boolean))];
 const parseEnvs = (t) => [...new Set((t || "").split(/[,\s]+/).map((x) => x.trim().toUpperCase()).filter(Boolean))];
 
+const TYPE_LABELS = { one: "One address", env: "Per environment", pattern: "Pattern" };
+
 function renderClients() {
   const root = $("clients");
   root.innerHTML = "";
@@ -224,49 +226,68 @@ function renderClients() {
     b.textContent = name;
     const envIn = input("text", envs.join(", "), { placeholder: "Environments, optional: e.g. DV, QA, ST, NP etc.", "data-c": "envs" });
     envIn.addEventListener("change", () => { collect(); renderClients(); });
-    head.append(b, envIn);
+    const shortIn = input("text", c.short || "", { placeholder: "Short name, for $client", "data-c": "short" });
+    shortIn.addEventListener("input", () => updatePreviews(box));
+    head.append(b, envIn, shortIn);
     box.append(head);
 
     const links = c.links || [];
     const cols = Math.max(1, envs.length);
     const grid = document.createElement("div");
     grid.className = "ltable";
-    grid.style.gridTemplateColumns = "200px repeat(" + cols + ", minmax(0, 1fr))" + (envs.length ? " auto" : "") + " 34px";
+    grid.style.gridTemplateColumns = "200px 150px repeat(" + cols + ", minmax(0, 1fr)) 34px";
     if (links.length) {
       const hdr = (t) => { const h = document.createElement("span"); h.className = "lt-h"; h.textContent = t; return h; };
-      grid.append(hdr("Label"));
+      grid.append(hdr("Label"), hdr("Type"));
       if (envs.length) for (const e of envs) grid.append(hdr(e)); else grid.append(hdr("Address"));
-      if (envs.length) grid.append(hdr(""));
       grid.append(hdr(""));
     }
     links.forEach((l, j) => {
+      let type = linkType(l);
+      if (type === "env" && !envs.length) type = "one";
       const row = document.createElement("div");
       row.className = "lt-row";
-      const lab = input("text", l.label, { placeholder: "e.g. BOS admin", "data-l": "label" });
-      row.append(lab);
-      const same = !envs.length || l.url !== undefined;
-      if (same) {
-        const u = input("text", l.url !== undefined ? l.url : Object.values(l.urls || {})[0] || "", { placeholder: "https://", "data-l": "url" });
-        u.style.gridColumn = "span " + cols;
-        row.append(u);
-      } else {
+      row.dataset.type = type;
+      row.append(input("text", l.label, { placeholder: "e.g. BOS admin", "data-l": "label" }));
+
+      const typeSel = document.createElement("select");
+      typeSel.dataset.l = "type";
+      for (const t of envs.length ? ["one", "env", "pattern"] : ["one", "pattern"]) {
+        const o = document.createElement("option");
+        o.value = t;
+        o.textContent = TYPE_LABELS[t];
+        typeSel.append(o);
+      }
+      typeSel.value = type;
+      typeSel.addEventListener("change", () => { markDirty(); collect(); renderClients(); });
+      row.append(typeSel);
+
+      if (type === "env") {
         for (const e of envs) row.append(input("text", (l.urls || {})[e] || "", { placeholder: e + " address", "data-env": e }));
+      } else {
+        const isPat = type === "pattern";
+        const val = isPat ? (l.pattern || "") : (l.url !== undefined ? l.url : Object.values(l.urls || {})[0] || "");
+        const u = input("text", val, {
+          placeholder: isPat ? "https://$environment-bosadmin.$client.example.net" : "https://",
+          "data-l": isPat ? "pattern" : "url",
+        });
+        u.style.gridColumn = "span " + cols;
+        if (isPat) u.addEventListener("input", () => updatePreviews(box));
+        row.append(u);
       }
-      if (envs.length) {
-        const t = document.createElement("label");
-        t.className = "tog";
-        t.title = "Use one address for every environment";
-        const cb = input("checkbox", same, { "data-l": "same" });
-        cb.addEventListener("change", () => { collect(); renderClients(); });
-        t.append(cb, document.createTextNode(" Same in all"));
-        row.append(t);
-      }
+
       const del = document.createElement("button");
       del.className = "icon-btn";
       del.textContent = "✕";
       del.title = "Remove this link";
       del.addEventListener("click", () => { collect(); work.clients[name].links.splice(j, 1); markDirty(); renderClients(); });
       row.append(del);
+
+      if (type === "pattern") {
+        const prev = document.createElement("div");
+        prev.className = "lt-preview";
+        row.append(prev);
+      }
       grid.append(row);
     });
     box.append(grid);
@@ -285,7 +306,55 @@ function renderClients() {
     });
     box.append(add);
     root.append(box);
+    updatePreviews(box);
   }
+}
+
+// Under each pattern, show what it expands to for every environment.
+function updatePreviews(box) {
+  const envs = parseEnvs(box.querySelector("[data-c=envs]").value);
+  const short = box.querySelector("[data-c=short]").value.trim();
+  for (const row of box.querySelectorAll(".lt-row[data-type=pattern]")) {
+    const prev = row.querySelector(".lt-preview");
+    const pat = row.querySelector("[data-l=pattern]").value.trim();
+    prev.innerHTML = "";
+    if (!pat) { prev.textContent = "Use $environment and $client in the address."; continue; }
+    PATTERN_CLIENT.lastIndex = 0;
+    if (PATTERN_CLIENT.test(pat) && !short) { PATTERN_CLIENT.lastIndex = 0; prev.textContent = "Add the client's short name to fill in $client."; prev.classList.add("warn"); continue; }
+    PATTERN_CLIENT.lastIndex = 0;
+    prev.classList.remove("warn");
+    for (const e of envs.length ? envs : [""]) {
+      const line = document.createElement("div");
+      const url = expandPattern(pat, e, short);
+      if (e) { const tag = document.createElement("b"); tag.textContent = e; line.append(tag); }
+      const code = document.createElement("span");
+      code.textContent = url;
+      if (!isWebUrl(url)) code.className = "bad";
+      line.append(code);
+      prev.append(line);
+    }
+  }
+}
+
+// Remove blank link rows, and clients with nothing set, before saving/exporting.
+function pruneClients(cfg) {
+  const out = {};
+  for (const [name, c] of Object.entries(cfg.clients || {})) {
+    const links = (c.links || []).filter((l) => (l.label || "").trim() || (l.url || "").trim() ||
+      (l.pattern || "").trim() || Object.values(l.urls || {}).some(Boolean));
+    if ((c.envs || []).length || links.length || c.short) out[name] = { envs: c.envs || [], short: c.short || "", links };
+  }
+  cfg.clients = out;
+}
+
+// Best guess at a pattern from per-environment addresses: swap the first
+// environment's name and the short name for $environment and $client.
+function guessPattern(urls, envs, short) {
+  const e = envs.find((x) => urls[x]);
+  if (!e) return "";
+  let p = urls[e].replace(new RegExp(e, "ig"), "$environment");
+  if (short) p = p.replace(new RegExp("\\b" + short.replace(/[^a-z0-9-]/gi, "") + "\\b", "ig"), "$client");
+  return p;
 }
 
 function collectClients() {
@@ -293,32 +362,33 @@ function collectClients() {
   for (const box of $("clients").querySelectorAll(".client")) {
     const name = box.dataset.client;
     const envs = parseEnvs(box.querySelector("[data-c=envs]").value);
+    const short = box.querySelector("[data-c=short]").value.trim().toLowerCase();
     const links = [];
     for (const row of box.querySelectorAll(".lt-row")) {
       const label = row.querySelector("[data-l=label]").value.trim();
-      const sameCb = row.querySelector("[data-l=same]");
-      const one = row.querySelector("[data-l=url]");
-      let link;
-      if (one) {
-        const url = one.value.trim();
-        // "Same in all" switched off: start each environment with the old address
-        if (sameCb && !sameCb.checked && envs.length) {
-          link = { label, urls: Object.fromEntries(envs.map((e) => [e, url])) };
-        } else link = { label, url };
-      } else {
-        const urls = {};
+      const was = row.dataset.type;
+      let want = row.querySelector("[data-l=type]").value;
+      if (want === "env" && !envs.length) want = "one";
+      // What the row holds now, in its current (rendered) type
+      let one = "", urls = {}, pattern = "";
+      if (was === "env") {
         for (const u of row.querySelectorAll("[data-env]")) if (u.value.trim()) urls[u.dataset.env] = u.value.trim();
-        if (sameCb && sameCb.checked) link = { label, url: Object.values(urls)[0] || "" };
-        else link = { label, urls };
+      } else if (was === "pattern") pattern = row.querySelector("[data-l=pattern]").value.trim();
+      else one = row.querySelector("[data-l=url]").value.trim();
+      // Convert when the type was changed
+      let link;
+      if (want === "pattern") {
+        link = { label, pattern: was === "pattern" ? pattern : was === "env" ? guessPattern(urls, envs, short) : one };
+      } else if (want === "env") {
+        if (was === "env") link = { label, urls };
+        else link = { label, urls: Object.fromEntries(envs.map((e) => [e, was === "pattern" ? expandPattern(pattern, e, short) : one])) };
+        for (const k of Object.keys(link.urls)) if (!envs.includes(k) || !link.urls[k]) delete link.urls[k];
+      } else {
+        link = { label, url: was === "one" ? one : was === "env" ? (Object.values(urls)[0] || "") : expandPattern(pattern, envs[0] || "", short) };
       }
-      if (envs.length && link.urls) {  // drop addresses for environments that were removed
-        for (const k of Object.keys(link.urls)) if (!envs.includes(k)) delete link.urls[k];
-      }
-      if (!envs.length && link.urls) link = { label, url: Object.values(link.urls)[0] || "" };
-      const empty = !label && !(link.url || Object.values(link.urls || {}).some(Boolean));
-      if (!empty) links.push(link);
+      links.push(link);  // blank rows are kept while editing; pruneClients() drops them on save
     }
-    if (envs.length || links.length) out[name] = { envs, links };
+    if (envs.length || links.length || short) out[name] = { envs, short, links };
   }
   work.clients = out;
 }
@@ -499,6 +569,7 @@ function renderWarnings() {
 
 async function save() {
   collect();
+  pruneClients(work);
   work.customHolidays.sort((x, y) => (x.date || "").localeCompare(y.date || ""));
   const errs = validateConfig(work);
   showErrors(errs);
@@ -506,6 +577,7 @@ async function save() {
   try {
     await saveConfig(work);
     dirty = false;
+    renderClients();  // show the tidied list (blank rows removed)
     setStatus("Saved", "good");
   } catch (e) {
     setStatus("Couldn't save: " + e.message, "bad");
@@ -514,6 +586,7 @@ async function save() {
 
 function exportJson() {
   collect();
+  pruneClients(work);
   const blob = new Blob([JSON.stringify(work, null, 2)], { type: "application/json" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);

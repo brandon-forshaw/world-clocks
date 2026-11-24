@@ -3,6 +3,13 @@
 Each release needs a section here before running `release.sh`. The section is
 sent to Mozilla as the version's release notes and used for the GitHub release.
 
+## 1.8.0
+
+- Pattern links: one address with $environment and $client in it, filled in for each environment, with a live preview on the settings page
+- Short name per client, used for $client
+- Each link now has a type: one address, per environment, or pattern. Switching a per-environment link to a pattern suggests one from its addresses
+- Fixed a new blank link row disappearing when ticking "Same in all"
+
 ## 1.7.0
 
 - Display settings: 12 or 24-hour clock, seconds on or off, date style and language
