@@ -100,11 +100,13 @@ jobs:
           }
           GUID=$(jq -r .browser_specific_settings.gecko.id extension/manifest.json)
           URL=""
+          API="https://addons.mozilla.org/api/v5/addons/addon/$GUID/versions/v$VERSION/"
           for i in $(seq 1 20); do
-            RESP=$(curl -fsS -H "Authorization: JWT $(jwt)" "https://addons.mozilla.org/api/v5/addons/$GUID/versions/$VERSION/" || true)
-            URL=$(echo "$RESP" | jq -r 'if (.files[0].signed // true) then (.files[0].download_url // empty) else empty end' 2>/dev/null || true)
+            RESP=$(curl -sS -H "Authorization: JWT $(jwt)" "$API" || true)
+            URL=$(echo "$RESP" | jq -r 'select(.file.status != "unreviewed" and .file.status != "disabled") | .file.url // empty' 2>/dev/null || true)
             [ -n "$URL" ] && break
-            echo "Not signed yet (try $i of 20), waiting 30s"; sleep 30
+            echo "Not ready (try $i of 20): $(echo "$RESP" | head -c 300)"
+            echo "Waiting 30s"; sleep 30
           done
           if [ -z "$URL" ]; then echo "::error::Mozilla has no signed $VERSION to download"; exit 1; fi
           curl -fsSL -H "Authorization: JWT $(jwt)" -o "dist/world-clocks-$VERSION-signed.xpi" "$URL"
